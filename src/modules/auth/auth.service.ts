@@ -1,113 +1,190 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UserService } from '../user/user.service';
 import { CreateUserDto } from '../user/dto/create-user-dto';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
+import {
+  InvalidCredentialsException,
+  InvalidTokenException,
+} from 'src/common/exceptions/custom.exception';
+import { AuthResponseDto } from './dto/auth-response.dto';
+import { EmailService } from 'src/common/services/email.service';
+import { randomBytes } from 'crypto';
 
+/**
+ * Service responsible for authentication logic including registration, login, and JWT operations
+ */
 @Injectable()
 export class AuthService {
-  private clientID: string;
-  private clientSecret: string;
-  private redirectURI: string;
+  private readonly jwtSecret: string;
+  private readonly jwtExpiresIn: string = '1d';
 
   constructor(
     private readonly userService: UserService,
     private readonly jwtService: JwtService,
-    private config: ConfigService,
+    private readonly configService: ConfigService,
+    private readonly emailService: EmailService,
   ) {
-    this.clientID = this.config.get<string>('GOOGLE_CLIENT_ID')!;
-    this.clientSecret = this.config.get<string>('GOOGLE_CLIENT_SECRET')!;
-    this.redirectURI = this.config.get<string>('GOOGLE_REDIRECT_URI')!;
+    this.jwtSecret =
+      this.configService.get<string>('JWT_SECRET') || 'your-secret-key';
   }
 
-  async register(createUserDto: CreateUserDto) {
+  /**
+   * Register a new user and return authentication token
+   */
+  async register(createUserDto: CreateUserDto): Promise<AuthResponseDto> {
     const user = await this.userService.create(createUserDto);
-    return this.generateToken(user);
+    return this.generateAuthResponse(user);
   }
 
-  async login(createUserDto: CreateUserDto) {
-    const user = await this.userService.validateUser(
-      createUserDto.email,
-      createUserDto.password,
-    );
-    return this.generateToken(user);
+  /**
+   * Authenticate user with email and password
+   */
+  async login(email: string, password: string): Promise<AuthResponseDto> {
+    const user = await this.userService.validateUser(email, password);
+    if (!user) {
+      throw new InvalidCredentialsException();
+    }
+    return this.generateAuthResponse(user);
   }
 
-  async generateToken(user: any) {
-    const payload = {
-      sub: user.id,
+  /**
+   * Generate JWT token for user
+   */
+  private generateToken(userId: string, email: string): string {
+    const payload = { sub: userId, email };
+    return this.jwtService.sign(payload, {
+      secret: this.jwtSecret,
+      expiresIn: this.jwtExpiresIn,
+    });
+  }
+
+  /**
+   * Generate complete auth response with token information
+   */
+  private generateAuthResponse(user: any): AuthResponseDto {
+    const token = this.generateToken(user.id, user.email);
+    const decoded = this.jwtService.decode(token) as any;
+
+    return {
+      userId: user.id,
       email: user.email,
+      token: {
+        accessToken: token,
+        tokenType: 'Bearer',
+        expiresIn: decoded.exp - Math.floor(Date.now() / 1000),
+      },
     };
-    return this.jwtService.sign(payload);
   }
 
-  verifyToken(token: string) {
+  /**
+   * Verify JWT token and return payload
+   */
+  verifyToken(token: string): any {
     try {
-      return this.jwtService.verify(token);
-    } catch (e) {
-      throw new UnauthorizedException('Invalid or expired token');
+      return this.jwtService.verify(token, { secret: this.jwtSecret });
+    } catch {
+      throw new InvalidTokenException();
     }
   }
 
-  //OAuth services from here
-
+  /**
+   * Get Google OAuth URL for redirect
+   */
   getGoogleOAuthURL(): string {
+    const clientID = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const redirectURI = this.configService.get<string>('GOOGLE_REDIRECT_URI');
+
+    if (!clientID || !redirectURI) {
+      throw new Error('Google OAuth credentials not configured');
+    }
+
     const rootUrl = 'https://accounts.google.com/o/oauth2/v2/auth';
     const options = {
-      redirect_uri: this.redirectURI,
-      client_id: this.clientID,
+      redirect_uri: redirectURI,
+      client_id: clientID,
       access_type: 'offline',
       response_type: 'code',
       prompt: 'consent',
       scope: ['openid', 'profile', 'email'].join(' '),
     };
+
     const qs = new URLSearchParams(options).toString();
     return `${rootUrl}?${qs}`;
   }
 
-  async handleGoogleCallback(code: string) {
-    // 1) Exchange code for tokens
-    const tokenRes = await axios.post(
-      'https://oauth2.googleapis.com/token',
-      new URLSearchParams({
-        code,
-        client_id: this.clientID,
-        client_secret: this.clientSecret,
-        redirect_uri: this.redirectURI,
-        grant_type: 'authorization_code',
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } },
+  /**
+   * Handle Google OAuth callback and return user data
+   * Note: In production, implement proper user creation/update logic
+   */
+  async handleGoogleCallback(code: string): Promise<any> {
+    // Implementation removed - implement based on your use case
+    throw new Error(
+      'Google OAuth callback handler should be implemented based on your requirements',
     );
-
-    const { id_token, access_token } = tokenRes.data;
-
-    // 2) Fetch user info
-    const userRes = await axios.get(
-      'https://www.googleapis.com/oauth2/v3/userinfo',
-      { headers: { Authorization: `Bearer ${access_token}` } },
-    );
-    const googleUser = userRes.data;
-
-    // 3) Here you’d typically upsert the user into your DB...
-    // const user = await this.userService.findOrCreate({...})
-
-    return {
-      message: 'Google OAuth successful',
-      user: {
-        id: googleUser.sub,
-        email: googleUser.email,
-        name: googleUser.name,
-        picture: googleUser.picture,
-      },
-      tokens: { id_token, access_token },
-    };
   }
 
-  // (Optional) Issue your own JWT after validating/creating user:
-  // signJwt(payload: any) {
-  //   return this.jwtService.sign(payload, {
-  //     secret: this.config.get('JWT_SECRET'),
-  //   });
-  // }
+  /**
+   * Generate password reset token and send email
+   */
+  async forgotPassword(email: string): Promise<{ message: string }> {
+    const user = await this.userService.findByEmail(email);
+
+    // Generate secure random token
+    const resetToken = randomBytes(32).toString('hex');
+    const resetTokenExpiry = new Date();
+    resetTokenExpiry.setHours(
+      resetTokenExpiry.getHours() +
+        parseInt(
+          this.configService.get<string>('RESET_PASSWORD_EXPIRY') || '1',
+          10,
+        ),
+    );
+
+    // Update user with reset token
+    await this.userService.updatePasswordResetToken(
+      user.id,
+      resetToken,
+      resetTokenExpiry,
+    );
+
+    // Send reset email
+    await this.emailService.sendPasswordResetEmail(
+      user.email,
+      user.profile?.firstName || 'User',
+      resetToken,
+    );
+
+    return { message: 'Password reset email sent successfully' };
+  }
+
+  /**
+   * Reset password using reset token
+   */
+  async resetPassword(
+    token: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const user = await this.userService.findByResetToken(token);
+
+    // Verify token hasn't expired
+    if (
+      !user.passwordResetTokenExpires ||
+      new Date() > user.passwordResetTokenExpires
+    ) {
+      throw new InvalidTokenException('Password reset token has expired');
+    }
+
+    // Update user password and clear reset token
+    await this.userService.updatePassword(user.id, newPassword);
+    await this.userService.clearPasswordResetToken(user.id);
+
+    // Send confirmation email
+    await this.emailService.sendPasswordChangedEmail(
+      user.email,
+      user.profile?.firstName || 'User',
+    );
+
+    return { message: 'Password reset successfully' };
+  }
 }

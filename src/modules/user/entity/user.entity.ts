@@ -1,14 +1,18 @@
-import { Post } from 'src/modules/post/entities/post.entity';
 import { Profile } from 'src/modules/profile/entity/profile.entity';
 import {
   Column,
   Entity,
   JoinColumn,
-  OneToMany,
   OneToOne,
   PrimaryGeneratedColumn,
+  CreateDateColumn,
+  UpdateDateColumn,
 } from 'typeorm';
-@Entity('user')
+
+/**
+ * User entity representing an authenticated user in the system
+ */
+@Entity('users')
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -19,15 +23,26 @@ export class User {
   @Column()
   password: string;
 
+  @Column({ type: 'varchar', default: 'user' })
+  role: string = 'user';
+
   @OneToOne(() => Profile, (profile) => profile.user, {
     cascade: true,
     eager: true,
+    nullable: true,
   })
   @JoinColumn()
   profile?: Profile;
 
-  @OneToMany(() => Post, (post) => post.user, {
-    cascade: true, // Optional: creates posts when you create a user with posts
-  })
-  posts?: Post[];
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  @Column({ nullable: true })
+  passwordResetToken?: string;
+
+  @Column({ type: 'timestamp', nullable: true })
+  passwordResetTokenExpires?: Date;
 }

@@ -1,84 +1,188 @@
-import {
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from './entity/user.entity';
-import * as bcrypt from 'bcrypt';
-import { UpdateUserDTO } from './dto/update-user-dto';
 import { CreateUserDto } from './dto/create-user-dto';
+import { UpdateUserDto } from './dto/update-user-dto';
+import {
+  DuplicateResourceException,
+  InvalidCredentialsException,
+  ResourceNotFoundException,
+} from 'src/common/exceptions/custom.exception';
+import * as bcrypt from 'bcrypt';
+
+/**
+ * User Service
+ * Handles user CRUD operations, authentication, and password management
+ */
 @Injectable()
 export class UserService {
   constructor(
     @InjectRepository(User) private readonly userRepository: Repository<User>,
   ) {}
 
-  async findByEmail(email: string): Promise<User | null> {
+  /**
+   * Find user by email
+   */
+  async findByEmail(email: string): Promise<User> {
     const user = await this.userRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new ResourceNotFoundException('User', `email: ${email}`);
+    }
+
     return user;
   }
 
-  async create(data: CreateUserDto): Promise<User> {
-    const existing = await this.findByEmail(data.email);
-    if (existing) throw new ConflictException('Email already exists');
+  /**
+   * Find user by password reset token
+   */
+  async findByResetToken(token: string): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { passwordResetToken: token },
+    });
 
-    const hashed = await bcrypt.hash(data.password, 10);
+    if (!user) {
+      throw new ResourceNotFoundException('User', `reset token`);
+    }
+
+    return user;
+  }
+
+  /**
+   * Create a new user with hashed password
+   */
+  async create(createUserDto: CreateUserDto): Promise<User> {
+    const existingUser = await this.userRepository.findOne({
+      where: { email: createUserDto.email },
+    });
+
+    if (existingUser) {
+      throw new DuplicateResourceException('User', 'email');
+    }
+
+    const hashedPassword = await bcrypt.hash(createUserDto.password, 10);
+
     const user = this.userRepository.create({
-      email: data.email,
-      password: hashed,
+      email: createUserDto.email,
+      password: hashedPassword,
+      role: 'user',
       profile: {
-        firstName: data.firstName,
-        lastName: data.lastName,
-        avatarUrl: data.avatarUrl,
+        firstName: createUserDto.firstName,
+        lastName: createUserDto.lastName,
       },
     });
+
     return this.userRepository.save(user);
   }
 
-  async validateUser(email: string, password: string): Promise<User | null> {
-    const user = await this.findByEmail(email);
-    if (user && (await bcrypt.compare(password, user.password))) {
-      return user;
+  /**
+   * Validate user credentials
+   */
+  async validateUser(email: string, password: string): Promise<User> {
+    const user = await this.userRepository.findOne({ where: { email } });
+
+    if (!user) {
+      throw new InvalidCredentialsException();
     }
-    return null;
-  }
 
-  async findAll(): Promise<User[]> {
-    return this.userRepository.find();
-  }
+    const isPasswordValid = await bcrypt.compare(password, user.password);
 
-  // READ: Get one user by ID
-  async findOneById(id: string): Promise<User> {
-    const user = await this.userRepository.findOne({ where: { id } });
-    if (!user) throw new NotFoundException('User not found');
+    if (!isPasswordValid) {
+      throw new InvalidCredentialsException();
+    }
+
     return user;
   }
 
-  // UPDATE: Modify user email and/or password
-  async update(id: string, updateDto: UpdateUserDTO): Promise<User> {
-    const user = await this.findOneById(id);
+  /**
+   * Get all users
+   */
+  async findAll(): Promise<User[]> {
+    return this.userRepository.find({ relations: ['profile'] });
+  }
 
-    if (updateDto.email) {
-      const existing = await this.findByEmail(updateDto.email);
-      if (existing && existing.id !== id) {
-        throw new ConflictException('Email already exists');
-      }
-      user.email = updateDto.email;
+  /**
+   * Get user by ID
+   */
+  async findOneById(id: string): Promise<User> {
+    const user = await this.userRepository.findOne({
+      where: { id },
+      relations: ['profile'],
+    });
+
+    if (!user) {
+      throw new ResourceNotFoundException('User', `id: ${id}`);
     }
 
-    if (updateDto.password) {
-      user.password = await bcrypt.hash(updateDto.password, 10);
+    return user;
+  }
+
+  /**
+   * Update user information
+   */
+  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
+    const user = await this.findOneById(id);
+
+    if (updateUserDto.email) {
+      const existingUser = await this.findByEmail(updateUserDto.email);
+      if (existingUser && existingUser.id !== id) {
+        throw new DuplicateResourceException('User', 'email');
+      }
+      user.email = updateUserDto.email;
+    }
+
+    if (updateUserDto.password) {
+      user.password = await bcrypt.hash(updateUserDto.password, 10);
     }
 
     return this.userRepository.save(user);
   }
 
-  // DELETE: Remove a user
-  async remove(id: string): Promise<{ message: string }> {
+  /**
+   * Delete user by ID
+   */
+  async delete(id: string): Promise<{ message: string }> {
     const user = await this.findOneById(id);
     await this.userRepository.remove(user);
-    return { message: `User with ID ${id} removed.` };
+    return { message: `User with ID ${id} deleted successfully` };
+  }
+
+  /**
+   * Update password reset token
+   */
+  async updatePasswordResetToken(
+    id: string,
+    token: string,
+    expiry: Date,
+  ): Promise<void> {
+    await this.userRepository.update(
+      { id },
+      {
+        passwordResetToken: token,
+        passwordResetTokenExpires: expiry,
+      },
+    );
+  }
+
+  /**
+   * Update user password
+   */
+  async updatePassword(id: string, newPassword: string): Promise<void> {
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await this.userRepository.update({ id }, { password: hashedPassword });
+  }
+
+  /**
+   * Clear password reset token after successful reset
+   */
+  async clearPasswordResetToken(id: string): Promise<void> {
+    await this.userRepository.update(
+      { id },
+      {
+        passwordResetToken: undefined,
+        passwordResetTokenExpires: undefined,
+      },
+    );
   }
 }
