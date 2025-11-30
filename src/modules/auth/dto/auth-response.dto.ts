@@ -1,3 +1,5 @@
+import { User } from 'src/modules/user/entity/user.entity';
+
 /**
  * DTO for token response after successful authentication
  */
@@ -11,7 +13,6 @@ export class TokenResponseDto {
  * DTO for successful login/register response
  */
 export class AuthResponseDto {
-  userId: string;
-  email: string;
+  user: User;
   token: TokenResponseDto;
 }

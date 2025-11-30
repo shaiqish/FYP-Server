@@ -61,8 +61,6 @@ export class ProfileService {
    */
   async create(createProfileDto: CreateProfileDto): Promise<Profile> {
     const profile = this.profileRepository.create({
-      firstName: createProfileDto.firstName,
-      lastName: createProfileDto.lastName,
       linkedTutor: createProfileDto.linkedTutor,
       language: createProfileDto.language,
       interests: createProfileDto.interests || [],

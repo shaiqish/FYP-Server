@@ -66,7 +66,7 @@ export class UserService {
     const user = this.userRepository.create({
       email: createUserDto.email,
       password: hashedPassword,
-      role: 'user',
+      role: createUserDto.role || 'user',
       profile: {
         firstName: createUserDto.firstName,
         lastName: createUserDto.lastName,

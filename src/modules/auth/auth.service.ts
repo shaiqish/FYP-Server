@@ -67,8 +67,7 @@ export class AuthService {
     const decoded = this.jwtService.decode(token) as any;
 
     return {
-      userId: user.id,
-      email: user.email,
+      user: user,
       token: {
         accessToken: token,
         tokenType: 'Bearer',

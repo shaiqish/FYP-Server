@@ -9,9 +9,6 @@ import {
 } from 'typeorm';
 import { User } from 'src/modules/user/entity/user.entity';
 
-/**
- * Profile entity representing extended user preferences & metadata
- */
 @Entity('profiles')
 export class Profile {
   @PrimaryGeneratedColumn('uuid')
@@ -29,26 +26,25 @@ export class Profile {
   @Column({ nullable: true })
   language?: string;
 
-  @Column('text', { array: true })
-  interests: string[];
+  @Column('text', { array: true, nullable: true })
+  interests?: string[];
 
-  @Column('text', { array: true })
-  preferences: string[];
+  @Column('text', { array: true, nullable: true })
+  preferences?: string[];
 
-  @Column()
-  pace: string;
+  @Column({ nullable: true })
+  pace?: string;
 
-  @Column()
-  schedule: string;
+  @Column({ nullable: true })
+  schedule?: string;
 
-  @Column()
-  difficulty: string;
+  @Column({ nullable: true })
+  difficulty?: string;
 
-  @Column('text', { array: true })
-  goals: string[];
+  @Column('text', { array: true, nullable: true })
+  goals?: string[];
 
   @OneToOne(() => User, (user) => user.profile, { onDelete: 'CASCADE' })
-  @JoinColumn()
   user: User;
 
   @CreateDateColumn()

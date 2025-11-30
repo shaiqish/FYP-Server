@@ -34,6 +34,7 @@ export class AuthController {
   @Post('register')
   async register(@Body() createUserDto: CreateUserDto) {
     const result = await this.authService.register(createUserDto);
+
     return ApiResponse.success('User registered successfully', result);
   }
 
