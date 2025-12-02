@@ -114,13 +114,73 @@ export class AuthService {
 
   /**
    * Handle Google OAuth callback and return user data
-   * Note: In production, implement proper user creation/update logic
+   * Exchanges authorization code for tokens and creates/updates user
    */
-  async handleGoogleCallback(code: string): Promise<any> {
-    // Implementation removed - implement based on your use case
-    throw new Error(
-      'Google OAuth callback handler should be implemented based on your requirements',
+  async handleGoogleCallback(code: string): Promise<AuthResponseDto> {
+    const clientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    const clientSecret = this.configService.get<string>('GOOGLE_CLIENT_SECRET');
+    const redirectUri = this.configService.get<string>('GOOGLE_REDIRECT_URI');
+
+    if (!clientId || !clientSecret || !redirectUri) {
+      throw new Error('Google OAuth credentials not configured');
+    }
+
+    // Exchange authorization code for tokens
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        code,
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+
+    if (!tokenResponse.ok) {
+      const error = await tokenResponse.text();
+      throw new Error(`Failed to exchange code for tokens: ${error}`);
+    }
+
+    const tokens = await tokenResponse.json();
+
+    // Fetch user info from Google
+    const userInfoResponse = await fetch(
+      'https://www.googleapis.com/oauth2/v2/userinfo',
+      {
+        headers: {
+          Authorization: `Bearer ${tokens.access_token}`,
+        },
+      },
     );
+
+    if (!userInfoResponse.ok) {
+      throw new Error('Failed to fetch user info from Google');
+    }
+
+    const googleUser = await userInfoResponse.json();
+
+    // Find or create user
+    let user;
+    try {
+      user = await this.userService.findByEmail(googleUser.email);
+    } catch {
+      // User doesn't exist, create new one
+      user = await this.userService.createGoogleUser({
+        email: googleUser.email,
+        firstName:
+          googleUser.given_name || googleUser.name?.split(' ')[0] || 'User',
+        lastName:
+          googleUser.family_name || googleUser.name?.split(' ')[1] || '',
+        googleId: googleUser.id,
+        avatarUrl: googleUser.picture,
+      });
+    }
+
+    return this.generateAuthResponse(user);
   }
 
   /**

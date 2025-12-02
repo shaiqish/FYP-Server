@@ -20,8 +20,11 @@ export class User {
   @Column({ unique: true })
   email: string;
 
-  @Column()
-  password: string;
+  @Column({ nullable: true })
+  password?: string;
+
+  @Column({ nullable: true, unique: true })
+  googleId?: string;
 
   @Column({ type: 'varchar', default: 'user' })
   role: string = 'user';

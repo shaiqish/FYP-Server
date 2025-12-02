@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { User } from './entity/user.entity';
 import { CreateUserDto } from './dto/create-user-dto';
 import { UpdateUserDto } from './dto/update-user-dto';
+import { CreateGoogleUserDto } from './dto/create-google-user.dto';
 import {
   DuplicateResourceException,
   InvalidCredentialsException,
@@ -84,6 +85,11 @@ export class UserService {
 
     if (!user) {
       throw new InvalidCredentialsException();
+    }
+
+    // Google users don't have a password
+    if (!user.password) {
+      throw new InvalidCredentialsException('Please use Google to sign in');
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.password);
@@ -184,5 +190,22 @@ export class UserService {
         passwordResetTokenExpires: undefined,
       },
     );
+  }
+
+  /**
+   * Create a new user from Google OAuth
+   */
+  async createGoogleUser(googleUserData: CreateGoogleUserDto): Promise<User> {
+    const user = this.userRepository.create({
+      email: googleUserData.email,
+      googleId: googleUserData.googleId,
+      role: 'user',
+      profile: {
+        firstName: googleUserData.firstName,
+        lastName: googleUserData.lastName,
+      },
+    });
+
+    return this.userRepository.save(user);
   }
 }
